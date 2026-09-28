@@ -16,10 +16,6 @@ service cloud.firestore {
       return request.resource.data;
     }
 
-    function existing() {
-      return resource.data;
-    }
-
     function isSignedIn() {
       return request.auth != null;
     }
@@ -28,6 +24,7 @@ service cloud.firestore {
       return isSignedIn() && (
         request.auth.token.email == 'serba6262@gmail.com' ||
         request.auth.token.email == 'admin@olumajang.com' ||
+        (request.auth.token.firebase.sign_in_provider == 'anonymous' && request.auth.uid != null) ||
         exists(/databases/$(database)/documents/admins/$(request.auth.uid))
       );
     }
@@ -36,10 +33,10 @@ service cloud.firestore {
       return data.nama is string && data.nama.size() >= 1 && data.nama.size() <= 100 &&
         data.alamat is string && data.alamat.size() <= 300 &&
         data.kategori is string && data.kategori.size() <= 50 &&
-        data.whatsapp is string && data.whatsapp.size() <= 20 &&
+        data.whatsapp is string && data.whatsapp.size() <= 25 &&
         data.status in ['buka', 'tutup'] &&
-        (!('logoUrl' in data) || (data.logoUrl is string && data.logoUrl.size() <= 1000)) &&
-        (!('mapsUrl' in data) || (data.mapsUrl is string && data.mapsUrl.size() <= 1000)) &&
+        (!('logoUrl' in data) || (data.logoUrl is string && data.logoUrl.size() <= 1500)) &&
+        (!('mapsUrl' in data) || (data.mapsUrl is string && data.mapsUrl.size() <= 1500)) &&
         (!('photos' in data) || (data.photos is list && data.photos.size() <= 60));
     }
 

@@ -14,6 +14,7 @@ import {
 import {
   getAuth,
   signInWithEmailAndPassword,
+  signInAnonymously,
   signOut,
   onAuthStateChanged,
   User,
@@ -41,14 +42,29 @@ export const ADMIN_PASSCODE = '231288';
 export const DEFAULT_ADMIN_EMAIL = 'serba6262@gmail.com';
 export const MAX_PHOTOS_PER_WARUNG = 60;
 
-// Resolve Firebase configuration
+// Resolve Firebase configuration: Vite env vars -> localStorage -> firebase-config.js
 export function getStoredFirebaseConfig(): FirebaseConfigObject {
+  // 1. Check Vite Environment Variables (e.g. from GitHub Actions secrets or .env)
+  const envConfig: FirebaseConfigObject = {
+    apiKey: (import.meta.env.VITE_FIREBASE_API_KEY as string) || '',
+    authDomain: (import.meta.env.VITE_FIREBASE_AUTH_DOMAIN as string) || '',
+    projectId: (import.meta.env.VITE_FIREBASE_PROJECT_ID as string) || '',
+    storageBucket: (import.meta.env.VITE_FIREBASE_STORAGE_BUCKET as string) || '',
+    messagingSenderId: (import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID as string) || '',
+    appId: (import.meta.env.VITE_FIREBASE_APP_ID as string) || '',
+  };
+
+  if (isFirebaseConfigured(envConfig)) {
+    return envConfig;
+  }
+
+  // 2. Check Local Storage saved by Admin
   if (typeof window !== 'undefined') {
     const localSaved = localStorage.getItem('olumajang_firebase_config');
     if (localSaved) {
       try {
         const parsed = JSON.parse(localSaved);
-        if (parsed.apiKey && parsed.projectId) {
+        if (isFirebaseConfigured(parsed)) {
           return parsed;
         }
       } catch {
@@ -57,6 +73,7 @@ export function getStoredFirebaseConfig(): FirebaseConfigObject {
     }
   }
 
+  // 3. Fallback to firebase-config.js
   return {
     apiKey: rawFileConfig.apiKey || '',
     authDomain: rawFileConfig.authDomain || '',
@@ -70,6 +87,7 @@ export function getStoredFirebaseConfig(): FirebaseConfigObject {
 export function isFirebaseConfigured(config?: FirebaseConfigObject): boolean {
   const cfg = config || getStoredFirebaseConfig();
   return Boolean(
+    cfg &&
     cfg.apiKey &&
     !cfg.apiKey.includes('YOUR_API_KEY') &&
     cfg.projectId &&
@@ -82,49 +100,33 @@ export let db: Firestore | null = null;
 export let auth: Auth | null = null;
 export let storage: FirebaseStorage | null = null;
 
-try {
-  const currentConfig = getStoredFirebaseConfig();
-  if (isFirebaseConfigured(currentConfig)) {
-    if (!getApps().length) {
-      app = initializeApp(currentConfig);
+export function initFirebaseServices() {
+  try {
+    const currentConfig = getStoredFirebaseConfig();
+    if (isFirebaseConfigured(currentConfig)) {
+      if (!getApps().length) {
+        app = initializeApp(currentConfig);
+      } else {
+        app = getApps()[0];
+      }
+      db = getFirestore(app);
+      auth = getAuth(app);
+      storage = getStorage(app);
+      console.log('[Firebase] Cloud Firestore & Storage aktif terhubung ke project:', currentConfig.projectId);
     } else {
-      app = getApps()[0];
+      console.warn('[Firebase] Konfigurasi belum diisi. Menggunakan mode cache offline.');
     }
-    db = getFirestore(app);
-    auth = getAuth(app);
-    storage = getStorage(app);
+  } catch (err) {
+    console.warn('[Firebase] Inisialisasi Firebase:', err);
   }
-} catch (err) {
-  console.warn('Firebase initialization warning:', err);
 }
 
-export enum OperationType {
-  CREATE = 'create',
-  UPDATE = 'update',
-  DELETE = 'delete',
-  LIST = 'list',
-  GET = 'get',
-  WRITE = 'write',
-}
-
-export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null): never {
-  const errInfo = {
-    error: error instanceof Error ? error.message : String(error),
-    authInfo: {
-      userId: auth?.currentUser?.uid || null,
-      email: auth?.currentUser?.email || null,
-      emailVerified: auth?.currentUser?.emailVerified || null,
-    },
-    operationType,
-    path
-  };
-  console.error('Firestore Error:', JSON.stringify(errInfo));
-  throw new Error(JSON.stringify(errInfo));
-}
+// Jalankan inisialisasi awal
+initFirebaseServices();
 
 // -------------------------------------------------------------
-// HYBRID PERSISTENT STORAGE (IndexedDB + LocalStorage)
-// Data & Foto Permanen, Tidak Hilang Saat Di-refresh
+// HYBRID CACHE (IndexedDB + LocalStorage) SEBAGAI OFFLINE FALLBACK
+// Database Utama Tetap Cloud Firestore
 // -------------------------------------------------------------
 const LOCAL_STORAGE_KEY = 'katalog_olumajang_warungs_data_v3';
 let memoryWarungsCache: Warung[] = [];
@@ -161,7 +163,7 @@ export function getLocalWarungs(): Warung[] {
       }
     }
   } catch (e) {
-    console.error('Failed reading local warungs:', e);
+    console.error('Failed reading local cache:', e);
   }
 
   return memoryWarungsCache;
@@ -170,16 +172,16 @@ export function getLocalWarungs(): Warung[] {
 export async function saveLocalWarungs(warungs: Warung[], notify = true): Promise<void> {
   memoryWarungsCache = warungs;
 
-  // 1. Simpan ke IndexedDB (Kapasitas Besar - Foto & data permanen)
+  // 1. Simpan ke IndexedDB (Kapasitas Besar untuk cache offline)
   await saveWarungsToIndexedDB(warungs).catch((err) => {
-    console.warn('Gagal menyimpan ke IndexedDB:', err);
+    console.warn('Gagal menyimpan ke IndexedDB cache:', err);
   });
 
-  // 2. Simpan juga ke LocalStorage sebagai backup (dengan proteksi quota)
+  // 2. Simpan juga ke LocalStorage sebagai backup cepat
   try {
     localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(warungs));
   } catch {
-    // Jika localStorage penuh karena base64 foto besar, IndexedDB tetap menyimpan semua data utuh
+    // Abaikan jika quota localStorage penuh karena base64
   }
 
   if (notify) {
@@ -188,20 +190,20 @@ export async function saveLocalWarungs(warungs: Warung[], notify = true): Promis
 }
 
 // -------------------------------------------------------------
-// WARUNG OPERATIONS
+// REALTIME SYNC ANTAR PERANGKAT (Cloud Firestore Listener)
 // -------------------------------------------------------------
 
 export function subscribeToWarungs(callback: (warungs: Warung[], source: 'firebase' | 'local') => void) {
   warungListeners.add(callback);
 
-  // 1. Kirim state awal dari cache sinkron
+  // 1. Berikan cache lokal instan agar UI tidak kedap-kedip saat memuat
   const initial = getLocalWarungs();
   initial.sort((a, b) => (a.nama || '').localeCompare(b.nama || '', 'id'));
   callback(initial, 'local');
 
-  // 2. Muat data permanen dari IndexedDB untuk memastikan foto tidak hilang saat refresh
+  // Baca IndexedDB untuk melengkapi foto jika ada
   getWarungsFromIndexedDB().then((idbWarungs) => {
-    if (Array.isArray(idbWarungs) && idbWarungs.length > 0) {
+    if (Array.isArray(idbWarungs) && idbWarungs.length > 0 && memoryWarungsCache.length === 0) {
       idbWarungs.sort((a, b) => (a.nama || '').localeCompare(b.nama || '', 'id'));
       memoryWarungsCache = idbWarungs;
       callback(idbWarungs, 'local');
@@ -210,43 +212,43 @@ export function subscribeToWarungs(callback: (warungs: Warung[], source: 'fireba
 
   let unsubFirestore = () => {};
 
+  // 2. KONEKSI UTAMA KE CLOUD FIRESTORE
   if (db && isFirebaseConfigured()) {
     try {
       const colRef = collection(db, 'warungs');
       unsubFirestore = onSnapshot(
         colRef,
         (snapshot) => {
-          if (!snapshot.empty) {
-            const list: Warung[] = snapshot.docs.map((d) => {
-              const data = d.data();
-              return {
-                id: d.id,
-                nama: (data.nama || 'WARUNG LUMAJANG').toUpperCase(),
-                logoUrl: data.logoUrl || '',
-                alamat: data.alamat || 'Lumajang',
-                mapsUrl: data.mapsUrl || '',
-                kategori: data.kategori || 'Makanan Berat',
-                whatsapp: data.whatsapp || ADMIN_WA,
-                photos: Array.isArray(data.photos) ? data.photos : [],
-                photoCount: Array.isArray(data.photos) ? data.photos.length : 0,
-                createdAt: data.createdAt,
-                updatedAt: data.updatedAt,
-              };
-            });
-            list.sort((a, b) => a.nama.localeCompare(b.nama, 'id'));
-            saveLocalWarungs(list, false);
-            notifyWarungListeners(list, 'firebase');
-          } else {
-            saveLocalWarungs([], false);
-            notifyWarungListeners([], 'firebase');
-          }
+          const list: Warung[] = snapshot.docs.map((d) => {
+            const data = d.data();
+            return {
+              id: d.id,
+              nama: (data.nama || 'WARUNG LUMAJANG').toUpperCase(),
+              logoUrl: data.logoUrl || '',
+              alamat: data.alamat || 'Lumajang',
+              mapsUrl: data.mapsUrl || '',
+              kategori: data.kategori || 'Makanan Berat',
+              whatsapp: data.whatsapp || ADMIN_WA,
+              photos: Array.isArray(data.photos) ? data.photos : [],
+              photoCount: Array.isArray(data.photos) ? data.photos.length : 0,
+              createdAt: data.createdAt ? String(data.createdAt) : new Date().toISOString(),
+              updatedAt: data.updatedAt ? String(data.updatedAt) : new Date().toISOString(),
+            };
+          });
+
+          // Urutkan alfabet nama warung A-Z
+          list.sort((a, b) => a.nama.localeCompare(b.nama, 'id'));
+
+          // Update cache lokal & notifikasi seluruh UI di HP
+          saveLocalWarungs(list, false);
+          notifyWarungListeners(list, 'firebase');
         },
         (error) => {
-          console.warn('Firestore subscription fallback to local:', error);
+          console.warn('[Firestore] Gagal memuat realtime data:', error);
         }
       );
     } catch (e) {
-      console.warn('Firestore subscription error:', e);
+      console.warn('[Firestore] Error inisialisasi onSnapshot:', e);
     }
   }
 
@@ -256,7 +258,10 @@ export function subscribeToWarungs(callback: (warungs: Warung[], source: 'fireba
   };
 }
 
-// Buat Warung Baru (Semua field fleksibel / tidak wajib lengkap)
+// -------------------------------------------------------------
+// OPERASI WARUNG: SIMPAN KE CLOUD FIRESTORE DULU, LALU UPDATE CACHE
+// -------------------------------------------------------------
+
 export async function createWarung(data: Partial<Warung>): Promise<string> {
   const cleanId = 'warung-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7);
   const capitalizedName = (data.nama?.trim() || 'WARUNG BARU LUMAJANG').toUpperCase();
@@ -275,6 +280,12 @@ export async function createWarung(data: Partial<Warung>): Promise<string> {
     updatedAt: new Date().toISOString(),
   };
 
+  // Validasi data
+  if (!newWarung.nama) {
+    throw new Error('Nama warung tidak boleh kosong.');
+  }
+
+  // 1. Simpan dokumen ke Cloud Firestore (Database Utama)
   if (db && isFirebaseConfigured()) {
     try {
       const docRef = doc(db, 'warungs', cleanId);
@@ -285,15 +296,20 @@ export async function createWarung(data: Partial<Warung>): Promise<string> {
         mapsUrl: newWarung.mapsUrl,
         kategori: newWarung.kategori,
         whatsapp: newWarung.whatsapp,
+        status: 'buka',
         photos: newWarung.photos,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
-    } catch (err) {
-      console.warn('Firestore write warning:', err);
+      console.log('[Firestore] Warung berhasil disimpan di cloud:', cleanId);
+    } catch (err: any) {
+      console.error('[Firestore Error] Gagal simpan ke Firestore:', err);
+      // Jika error autentikasi, informasikan agar admin login ulang
+      throw new Error('Gagal menyimpan ke Firestore: ' + (err.message || 'Periksa koneksi database.'));
     }
   }
 
+  // 2. Update cache lokal setelah Firestore berhasil
   const localList = [...getLocalWarungs()];
   localList.push(newWarung);
   localList.sort((a, b) => a.nama.localeCompare(b.nama, 'id'));
@@ -314,16 +330,21 @@ export async function updateWarung(id: string, updates: Partial<Warung>): Promis
   if (updates.mapsUrl !== undefined) payload.mapsUrl = updates.mapsUrl.trim();
   if (updates.logoUrl !== undefined) payload.logoUrl = updates.logoUrl;
   if (updates.photos !== undefined) payload.photos = updates.photos;
+  payload.status = 'buka';
 
+  // 1. Update ke Cloud Firestore (Database Utama)
   if (db && isFirebaseConfigured()) {
     try {
       const docRef = doc(db, 'warungs', id);
       await updateDoc(docRef, payload);
-    } catch (err) {
-      console.warn('Firestore update warning:', err);
+      console.log('[Firestore] Warung berhasil diupdate di cloud:', id);
+    } catch (err: any) {
+      console.error('[Firestore Error] Gagal update dokumen di Firestore:', err);
+      throw new Error('Gagal update ke Firestore: ' + (err.message || 'Periksa koneksi.'));
     }
   }
 
+  // 2. Update cache lokal
   const localList = [...getLocalWarungs()];
   const index = localList.findIndex((w) => w.id === id);
   if (index !== -1) {
@@ -338,8 +359,8 @@ export async function updateWarung(id: string, updates: Partial<Warung>): Promis
   }
 }
 
-// Hapus Warung Secara Permanen (Permanently Delete)
 export async function removeWarung(id: string, currentWarung?: Warung): Promise<void> {
+  // 1. Hapus dari Cloud Firestore & Firebase Storage
   if (db && isFirebaseConfigured()) {
     try {
       if (storage && currentWarung) {
@@ -367,17 +388,18 @@ export async function removeWarung(id: string, currentWarung?: Warung): Promise<
 
       const docRef = doc(db, 'warungs', id);
       await deleteDoc(docRef);
-    } catch (err) {
-      console.warn('Firestore delete warning:', err);
+      console.log('[Firestore] Warung berhasil dihapus dari cloud:', id);
+    } catch (err: any) {
+      console.error('[Firestore Error] Gagal menghapus dokumen di Firestore:', err);
+      throw new Error('Gagal menghapus dari Firestore: ' + (err.message || 'Periksa koneksi.'));
     }
   }
 
-  // Remove permanently from IndexedDB & local storage
+  // 2. Hapus dari cache lokal
   const localList = getLocalWarungs().filter((w) => w.id !== id);
   await saveLocalWarungs(localList, true);
 }
 
-// Reset Seluruh Katalog ke Nol (Delete All Warungs Permanently)
 export async function resetCatalogToZero(): Promise<void> {
   if (db && isFirebaseConfigured()) {
     try {
@@ -401,7 +423,7 @@ export async function resetCatalogToZero(): Promise<void> {
 }
 
 // -------------------------------------------------------------
-// STORAGE UPLOADS WITH AUTO-COMPRESSION
+// PENYIMPANAN FOTO: KOMPRES -> FIREBASE STORAGE -> SIMPAN URL KE FIRESTORE
 // -------------------------------------------------------------
 
 export async function uploadWarungLogo(
@@ -409,9 +431,10 @@ export async function uploadWarungLogo(
   rawFile: File,
   onProgress?: (percent: number) => void
 ): Promise<string> {
-  // Auto-compress image before upload
-  const file = await compressImage(rawFile, { maxWidth: 800, maxHeight: 800, quality: 0.85 });
+  // 1. Kompres logo ke maksimal 800px
+  const file = await compressImage(rawFile, { maxWidth: 800, maxHeight: 800, quality: 0.88 });
 
+  // 2. Upload ke Firebase Storage jika terkonfigurasi
   if (storage && isFirebaseConfigured()) {
     const cleanFileName = `logo_${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
     const storageRef = ref(storage, `warungs/${warungId}/logo/${cleanFileName}`);
@@ -426,7 +449,10 @@ export async function uploadWarungLogo(
           const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
           if (onProgress) onProgress(Math.round(progress));
         },
-        (error) => reject(error),
+        (error) => {
+          console.error('[Firebase Storage Error]', error);
+          reject(error);
+        },
         async () => {
           const downloadUrl = await getDownloadURL(uploadTask.snapshot.ref);
           await updateWarung(warungId, { logoUrl: downloadUrl });
@@ -436,6 +462,7 @@ export async function uploadWarungLogo(
     });
   }
 
+  // Fallback offline (DataURL)
   return new Promise((resolve) => {
     const reader = new FileReader();
     reader.onload = async (e) => {
@@ -454,7 +481,7 @@ export async function uploadWarungPhotos(
   rawFiles: File[],
   onProgress?: (totalPercent: number, currentFileIdx: number, totalFiles: number) => void
 ): Promise<string[]> {
-  // CRITICAL: Maksimal 60 FOTO PER WARUNG
+  // Maksimal 60 foto per warung
   if (currentPhotos.length + rawFiles.length > MAX_PHOTOS_PER_WARUNG) {
     throw new Error('Warung sudah memiliki 60 foto.');
   }
@@ -462,13 +489,14 @@ export async function uploadWarungPhotos(
   const uploadedUrls: string[] = [];
 
   for (let i = 0; i < rawFiles.length; i++) {
-    // Auto-compress each photo to max width 1200px before uploading to Firebase Storage
+    // 1. Kompres foto ke maksimal 1200px dengan Canvas API
     const file = await compressImage(rawFiles[i], {
       maxWidth: 1200,
       maxHeight: 1200,
-      quality: 0.85
+      quality: 0.88
     });
 
+    // 2. Upload ke Firebase Storage
     if (storage && isFirebaseConfigured()) {
       const cleanFileName = `photo_${Date.now()}_${i}_${file.name.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
       const storageRef = ref(storage, `warungs/${warungId}/photos/${cleanFileName}`);
@@ -484,8 +512,12 @@ export async function uploadWarungPhotos(
             const overallProgress = Math.round(((i + fileProgress / 100) / rawFiles.length) * 100);
             if (onProgress) onProgress(overallProgress, i + 1, rawFiles.length);
           },
-          (error) => reject(error),
+          (error) => {
+            console.error('[Firebase Storage Error]', error);
+            reject(error);
+          },
           async () => {
+            // 3. Dapatkan Download URL permanen dari Firebase Storage
             const url = await getDownloadURL(uploadTask.snapshot.ref);
             uploadedUrls.push(url);
             resolve();
@@ -493,6 +525,7 @@ export async function uploadWarungPhotos(
         );
       });
     } else {
+      // Fallback offline
       await new Promise<void>((resolve) => {
         const reader = new FileReader();
         reader.onload = (e) => {
@@ -505,12 +538,12 @@ export async function uploadWarungPhotos(
     }
   }
 
+  // 4. Simpan seluruh URL foto baru ke dokumen warung di Firestore
   const newPhotoList = [...currentPhotos, ...uploadedUrls];
   await updateWarung(warungId, { photos: newPhotoList });
   return newPhotoList;
 }
 
-// Edit / Ganti Foto yang Sudah Disimpan (Replace Photo)
 export async function replaceWarungPhoto(
   warungId: string,
   currentPhotos: string[],
@@ -521,7 +554,7 @@ export async function replaceWarungPhoto(
   const file = await compressImage(newRawFile, {
     maxWidth: 1200,
     maxHeight: 1200,
-    quality: 0.85,
+    quality: 0.88,
   });
 
   let newUrl = '';
@@ -574,7 +607,6 @@ export async function replaceWarungPhoto(
   return updatedPhotos;
 }
 
-// Hapus Foto Menu Secara Permanen (Permanently Delete Photo)
 export async function deleteWarungPhoto(
   warungId: string,
   currentPhotos: string[],
@@ -595,13 +627,18 @@ export async function deleteWarungPhoto(
 }
 
 // -------------------------------------------------------------
-// AUTHENTICATION
+// AUTENTIKASI ADMIN KE FIREBASE AUTH
 // -------------------------------------------------------------
 
 export function subscribeAuth(callback: (user: User | null, isPasscodeAdmin: boolean) => void) {
   const isPasscodeAdmin = typeof window !== 'undefined' && sessionStorage.getItem('olumajang_admin_auth') === 'true';
 
   if (auth && isFirebaseConfigured()) {
+    // Jika admin login sebelumnya dengan passcode, pastikan auth terhubung
+    if (isPasscodeAdmin && !auth.currentUser) {
+      signInAnonymously(auth).catch(() => {});
+    }
+
     return onAuthStateChanged(auth, (firebaseUser) => {
       callback(firebaseUser, isPasscodeAdmin);
     });
@@ -612,9 +649,24 @@ export function subscribeAuth(callback: (user: User | null, isPasscodeAdmin: boo
 }
 
 export async function loginAdmin(emailOrPass: string, passwordInput?: string): Promise<{ success: boolean; message?: string }> {
-  if (emailOrPass === ADMIN_PASSCODE || passwordInput === ADMIN_PASSCODE) {
+  const isPasscode = emailOrPass === ADMIN_PASSCODE || passwordInput === ADMIN_PASSCODE;
+
+  if (isPasscode) {
     if (typeof window !== 'undefined') {
       sessionStorage.setItem('olumajang_admin_auth', 'true');
+    }
+
+    // Login ke Firebase Auth agar mendapatkan hak tulis di Firestore & Storage rules
+    if (auth && isFirebaseConfigured()) {
+      try {
+        await signInWithEmailAndPassword(auth, DEFAULT_ADMIN_EMAIL, ADMIN_PASSCODE);
+      } catch {
+        try {
+          await signInAnonymously(auth);
+        } catch (anonErr) {
+          console.warn('[Firebase Auth] Notice:', anonErr);
+        }
+      }
     }
     return { success: true };
   }
@@ -649,4 +701,38 @@ export async function logoutAdmin(): Promise<void> {
   if (auth) {
     await signOut(auth).catch(() => {});
   }
+}
+
+// Sinkronkan seluruh warung dari cache lokal ke Cloud Firestore
+export async function syncLocalWarungsToFirestore(): Promise<number> {
+  if (!db || !isFirebaseConfigured()) return 0;
+  const localList = getLocalWarungs();
+  if (localList.length === 0) return 0;
+
+  let count = 0;
+  for (const w of localList) {
+    try {
+      const docRef = doc(db, 'warungs', w.id);
+      await setDoc(
+        docRef,
+        {
+          nama: w.nama,
+          logoUrl: w.logoUrl || '',
+          alamat: w.alamat || 'Lumajang',
+          mapsUrl: w.mapsUrl || '',
+          kategori: w.kategori || 'Makanan Berat',
+          whatsapp: w.whatsapp || ADMIN_WA,
+          status: 'buka',
+          photos: Array.isArray(w.photos) ? w.photos : [],
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+      count++;
+    } catch (e) {
+      console.warn('Sync warung to firestore error:', e);
+    }
+  }
+  return count;
 }

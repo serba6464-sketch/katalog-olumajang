@@ -3,10 +3,15 @@ rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
 
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
     function isAdmin() {
-      return request.auth != null && (
+      return isSignedIn() && (
         request.auth.token.email == 'serba6262@gmail.com' ||
-        request.auth.token.email == 'admin@olumajang.com'
+        request.auth.token.email == 'admin@olumajang.com' ||
+        (request.auth.token.firebase.sign_in_provider == 'anonymous' && request.auth.uid != null)
       );
     }
 
@@ -17,7 +22,7 @@ service firebase.storage {
       allow delete: if isAdmin();
     }
 
-    // Warung Photo Menu (Max 60 foto)
+    // Warung Photo Menu (Maksimal 60 foto per warung, dikompres max 1200px)
     match /warungs/{warungId}/photos/{fileName} {
       allow read: if true;
       allow write: if isAdmin() && request.resource.size < 10 * 1024 * 1024 && request.resource.contentType.matches('image/.*');

@@ -30,8 +30,11 @@ import {
   uploadWarungPhotos,
   replaceWarungPhoto,
   deleteWarungPhoto,
-  MAX_PHOTOS_PER_WARUNG
+  MAX_PHOTOS_PER_WARUNG,
+  isFirebaseConfigured,
+  getStoredFirebaseConfig,
 } from '../firebase';
+import { FirebaseConfigModal } from './FirebaseConfigModal';
 
 interface AdminModalProps {
   isOpen: boolean;
@@ -84,6 +87,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   const [uploadError, setUploadError] = useState('');
   const [uploadSuccessMessage, setUploadSuccessMessage] = useState('');
   const [editingPhotoIndex, setEditingPhotoIndex] = useState<number | null>(null);
+  const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
 
   const formLogoInputRef = useRef<HTMLInputElement>(null);
   const formPhotosInputRef = useRef<HTMLInputElement>(null);
@@ -593,6 +597,42 @@ export const AdminModal: React.FC<AdminModalProps> = ({
           ) : view === 'list' ? (
             /* List of Warungs */
             <div className="space-y-4">
+              {/* Cloud Sync Status Indicator (Khusus Admin - Menjamin Multi-HP Sinkron) */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 p-3 rounded-2xl bg-white border border-[#E8DFD8] shadow-2xs">
+                <div className="flex items-center gap-2.5">
+                  <div
+                    className={`w-3 h-3 rounded-full shrink-0 ${
+                      isFirebaseConfigured()
+                        ? 'bg-emerald-500 shadow-xs shadow-emerald-500/50'
+                        : 'bg-amber-500 animate-pulse'
+                    }`}
+                  />
+                  <div>
+                    <span className="text-xs font-black text-[#1F1612] block">
+                      {isFirebaseConfigured()
+                        ? `Cloud Firestore Terhubung: ${getStoredFirebaseConfig().projectId}`
+                        : 'Cloud Firestore Belum Terhubung'}
+                    </span>
+                    <p className="text-[11px] text-[#786C65]">
+                      {isFirebaseConfigured()
+                        ? 'Data warung dan foto otomatis sinkron real-time ke HP B dan semua perangkat.'
+                        : 'Data saat ini masih di cache HP ini. Klik tombol di kanan agar muncul di HP B.'}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsConfigModalOpen(true)}
+                  className={`text-xs font-black px-3.5 py-2 rounded-xl border transition-all shrink-0 ${
+                    isFirebaseConfigured()
+                      ? 'bg-gray-50 hover:bg-gray-100 text-[#1F1612] border-gray-200'
+                      : 'bg-amber-50 hover:bg-amber-100 text-amber-900 border-amber-300 shadow-xs'
+                  }`}
+                >
+                  {isFirebaseConfigured() ? '⚙️ Cek Cloud' : '⚡ Hubungkan Cloud Firebase'}
+                </button>
+              </div>
+
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
                   <h3 className="text-base font-black text-[#1F1612]">
@@ -1296,6 +1336,13 @@ export const AdminModal: React.FC<AdminModalProps> = ({
           )}
         </div>
       </div>
+
+      {/* Modal Pengaturan Cloud Database Firebase (Khusus Admin) */}
+      <FirebaseConfigModal
+        isOpen={isConfigModalOpen}
+        onClose={() => setIsConfigModalOpen(false)}
+        onConfigSaved={() => setIsConfigModalOpen(false)}
+      />
     </div>
   );
 };
