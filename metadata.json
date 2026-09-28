@@ -1,0 +1,6 @@
+{
+  "name": "Katalog Olumajang",
+  "description": "Katalog digital warung dan menu kuliner khas Lumajang dengan pemesanan WhatsApp, galeri foto interaktif, dan panel admin.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

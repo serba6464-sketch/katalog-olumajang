@@ -1,0 +1,60 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.email == 'serba6262@gmail.com' ||
+        request.auth.token.email == 'admin@olumajang.com' ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isValidWarung(data) {
+      return data.nama is string && data.nama.size() >= 1 && data.nama.size() <= 100 &&
+        data.alamat is string && data.alamat.size() <= 300 &&
+        data.kategori is string && data.kategori.size() <= 50 &&
+        data.whatsapp is string && data.whatsapp.size() <= 20 &&
+        data.status in ['buka', 'tutup'] &&
+        (!('logoUrl' in data) || (data.logoUrl is string && data.logoUrl.size() <= 1000)) &&
+        (!('mapsUrl' in data) || (data.mapsUrl is string && data.mapsUrl.size() <= 1000)) &&
+        (!('photos' in data) || (data.photos is list && data.photos.size() <= 60));
+    }
+
+    // Public catalog collection: warungs
+    match /warungs/{warungId} {
+      allow get, list: if true;
+      allow create: if isValidId(warungId) && isAdmin() && isValidWarung(incoming());
+      allow update: if isValidId(warungId) && isAdmin() && isValidWarung(incoming());
+      allow delete: if isValidId(warungId) && isAdmin();
+    }
+
+    // Admins metadata collection
+    match /admins/{adminId} {
+      allow read: if isAdmin();
+      allow write: if false; // managed manually in console
+    }
+  }
+}

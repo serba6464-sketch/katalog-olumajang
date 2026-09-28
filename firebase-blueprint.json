@@ -1,0 +1,66 @@
+{
+  "entities": {
+    "Warung": {
+      "title": "Warung",
+      "description": "Data warung/kuliner di Katalog Olumajang",
+      "type": "object",
+      "properties": {
+        "nama": {
+          "type": "string",
+          "description": "Nama warung",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "logoUrl": {
+          "type": "string",
+          "description": "URL gambar logo warung",
+          "maxLength": 1000
+        },
+        "alamat": {
+          "type": "string",
+          "description": "Alamat fisik warung di Lumajang",
+          "maxLength": 300
+        },
+        "mapsUrl": {
+          "type": "string",
+          "description": "Tautan Google Maps warung",
+          "maxLength": 500
+        },
+        "kategori": {
+          "type": "string",
+          "description": "Kategori warung",
+          "maxLength": 50
+        },
+        "whatsapp": {
+          "type": "string",
+          "description": "Nomor WhatsApp warung (format 628...)",
+          "maxLength": 20
+        },
+        "status": {
+          "type": "string",
+          "description": "Status operasional warung",
+          "enum": ["buka", "tutup"]
+        },
+        "photos": {
+          "type": "array",
+          "description": "Daftar URL foto menu warung, maksimal 60 foto"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Waktu pembuatan dokumen"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Waktu pembaruan terakhir dokumen"
+        }
+      },
+      "required": ["nama", "alamat", "kategori", "whatsapp", "status"]
+    }
+  },
+  "firestore": {
+    "/warungs/{warungId}": {
+      "schema": "Warung",
+      "description": "Koleksi data warung dan menu wilayah Lumajang"
+    }
+  }
+}
