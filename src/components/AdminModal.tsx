@@ -233,6 +233,14 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   const handleSaveWarung = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError('');
+
+    if (!isFirebaseConfigured()) {
+      setFormError(
+        'Cloud Firestore belum terhubung! Silakan klik tombol "⚡ Hubungkan Cloud Firebase" di bagian atas untuk memasukkan konfigurasi Firebase Anda agar data warung tersimpan di cloud dan dapat dibuka oleh HP lain.'
+      );
+      return;
+    }
+
     setIsSaving(true);
     setUploadProgress(10);
     setUploadStatusText('Menyiapkan data warung...');
@@ -241,8 +249,8 @@ export const AdminModal: React.FC<AdminModalProps> = ({
       const finalName = formNama.trim() ? formNama.trim().toUpperCase() : 'WARUNG LUMAJANG';
 
       if (view === 'add') {
-        // 1. Buat warung
-        setUploadStatusText('Menyimpan data warung...');
+        // 1. Buat warung langsung di Cloud Firestore
+        setUploadStatusText('Menyimpan data warung ke Cloud Firestore...');
         const newId = await createWarung({
           nama: finalName,
           alamat: formAlamat.trim() || 'Lumajang',
@@ -255,14 +263,14 @@ export const AdminModal: React.FC<AdminModalProps> = ({
 
         // 2. Upload Logo jika ada
         if (selectedLogoFile) {
-          setUploadStatusText('Mengompres dan mengunggah logo...');
+          setUploadStatusText('Mengompres dan mengunggah logo ke Firebase Storage...');
           setUploadProgress(30);
           await uploadWarungLogo(newId, selectedLogoFile);
         }
 
         // 3. Upload Foto-foto Menu jika ada
         if (selectedPhotoFiles.length > 0) {
-          setUploadStatusText(`Mengompres & mengunggah ${selectedPhotoFiles.length} foto menu...`);
+          setUploadStatusText(`Mengompres & mengunggah ${selectedPhotoFiles.length} foto menu ke Firebase Storage...`);
           await uploadWarungPhotos(
             newId,
             [],
@@ -275,12 +283,12 @@ export const AdminModal: React.FC<AdminModalProps> = ({
         }
 
         setUploadProgress(100);
-        setUploadStatusText('Warung dan seluruh foto berhasil disimpan!');
+        setUploadStatusText('Warung dan seluruh foto berhasil disimpan ke server cloud!');
         setTimeout(() => {
           setIsSaving(false);
           setUploadProgress(null);
           setView('list');
-          alert(`Warung "${finalName}" berhasil disimpan beserta logo dan foto menu!`);
+          alert(`Warung "${finalName}" berhasil disimpan ke Cloud Firestore beserta logo dan foto menu!`);
         }, 800);
       } else if (view === 'edit' && selectedWarung) {
         await updateWarung(selectedWarung.id, {
@@ -294,7 +302,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
         setView('list');
       }
     } catch (err: any) {
-      setFormError(err.message || 'Gagal menyimpan data warung.');
+      setFormError(err.message || 'Gagal menyimpan data warung ke server.');
       setIsSaving(false);
       setUploadProgress(null);
     }

@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { X, Database, CheckCircle2, AlertTriangle, KeyRound, Copy, Check } from 'lucide-react';
+import { X, Database, CheckCircle2, AlertTriangle, KeyRound, Copy, Check, FlaskConical, Loader2 } from 'lucide-react';
 import {
   getStoredFirebaseConfig,
   isFirebaseConfigured,
   initFirebaseServices,
-  syncLocalWarungsToFirestore
+  syncLocalWarungsToFirestore,
+  testFirestoreWriteAndRead
 } from '../firebase';
 import { FirebaseConfigObject } from '../types';
 
@@ -32,6 +33,15 @@ export const FirebaseConfigModal: React.FC<FirebaseConfigModalProps> = ({
   const [copiedJs, setCopiedJs] = useState(false);
   const [syncStatus, setSyncStatus] = useState<string>('');
 
+  // Diagnostic Test States
+  const [isTesting, setIsTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{
+    success: boolean;
+    message: string;
+    projectId?: string;
+    latencyMs?: number;
+  } | null>(null);
+
   useEffect(() => {
     if (isOpen) {
       const stored = getStoredFirebaseConfig();
@@ -39,12 +49,29 @@ export const FirebaseConfigModal: React.FC<FirebaseConfigModalProps> = ({
       setJsonInput(JSON.stringify(stored, null, 2));
       setSavedSuccess(false);
       setSyncStatus('');
+      setTestResult(null);
     }
   }, [isOpen]);
 
   if (!isOpen) return null;
 
   const isConfigured = isFirebaseConfigured(config);
+
+  const handleTestConnection = async () => {
+    setIsTesting(true);
+    setTestResult(null);
+    try {
+      const result = await testFirestoreWriteAndRead();
+      setTestResult(result);
+    } catch (err: any) {
+      setTestResult({
+        success: false,
+        message: 'Gagal menjalankan tes: ' + (err.message || String(err)),
+      });
+    } finally {
+      setIsTesting(false);
+    }
+  };
 
   const handleSaveJson = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -60,7 +87,11 @@ export const FirebaseConfigModal: React.FC<FirebaseConfigModalProps> = ({
       setSyncStatus('Menghubungkan ke Cloud Firestore...');
 
       initFirebaseServices();
-      const syncedCount = await syncLocalWarungsToFirestore();
+      const syncedCount = await syncLocalWarungsToFirestore().catch((err) => {
+        console.warn('Sync notice:', err);
+        return 0;
+      });
+
       if (syncedCount > 0) {
         setSyncStatus(`${syncedCount} warung berhasil disinkronkan ke Cloud Firestore!`);
       }
@@ -118,27 +149,75 @@ export const FirebaseConfigModal: React.FC<FirebaseConfigModalProps> = ({
         <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 text-sm">
           {/* Status Indicator */}
           <div
-            className={`p-3.5 rounded-2xl border flex items-center gap-3 ${
+            className={`p-3.5 rounded-2xl border flex items-center justify-between gap-3 ${
               isConfigured
                 ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
                 : 'bg-amber-50 border-amber-200 text-amber-900'
             }`}
           >
-            {isConfigured ? (
-              <CheckCircle2 className="w-6 h-6 text-emerald-600 shrink-0" />
-            ) : (
-              <AlertTriangle className="w-6 h-6 text-amber-600 shrink-0" />
-            )}
-            <div>
-              <h4 className="font-extrabold text-xs sm:text-sm">
-                {isConfigured ? 'Cloud Firestore Terhubung & Aktif' : 'Konfigurasi Cloud Belum Lengkap'}
-              </h4>
-              <p className="text-xs mt-0.5 opacity-90 leading-tight">
-                {isConfigured
-                  ? `Project ID: ${config.projectId}. Sinkronisasi otomatis antar HP A dan HP B aktif.`
-                  : 'Data masih tersimpan di cache lokal HP ini. Tempelkan firebaseConfig agar tersinkronisasi ke seluruh HP lain.'}
-              </p>
+            <div className="flex items-center gap-3">
+              {isConfigured ? (
+                <CheckCircle2 className="w-6 h-6 text-emerald-600 shrink-0" />
+              ) : (
+                <AlertTriangle className="w-6 h-6 text-amber-600 shrink-0" />
+              )}
+              <div>
+                <h4 className="font-extrabold text-xs sm:text-sm">
+                  {isConfigured ? 'Cloud Firestore Terkonfigurasi' : 'Konfigurasi Cloud Belum Lengkap'}
+                </h4>
+                <p className="text-xs mt-0.5 opacity-90 leading-tight">
+                  {isConfigured
+                    ? `Project ID: ${config.projectId}. Sinkronisasi multi-HP terpusat di Cloud Firestore.`
+                    : 'Aplikasi masih berjalan tanpa cloud. Tempelkan firebaseConfig agar tersinkronisasi ke seluruh HP.'}
+                </p>
+              </div>
             </div>
+          </div>
+
+          {/* Test Connection Button & Result */}
+          <div className="p-3.5 rounded-2xl bg-white border border-[#E8DFD8] space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <FlaskConical className="w-4 h-4 text-red-600" />
+                <span className="font-extrabold text-xs text-[#1F1612]">
+                  Uji Tulis &amp; Baca Firestore Langsung
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={handleTestConnection}
+                disabled={isTesting || !isConfigured}
+                className="py-1.5 px-3 rounded-xl bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white font-extrabold text-xs flex items-center gap-1.5 shadow-xs transition-all"
+              >
+                {isTesting ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    Menguji...
+                  </>
+                ) : (
+                  'Jalankan Uji Tulis & Baca'
+                )}
+              </button>
+            </div>
+
+            {testResult && (
+              <div
+                className={`p-3 rounded-xl text-xs font-semibold border flex items-start gap-2 ${
+                  testResult.success
+                    ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                    : 'bg-rose-50 border-rose-200 text-rose-800'
+                }`}
+              >
+                {testResult.success ? (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                ) : (
+                  <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                )}
+                <div className="leading-relaxed">
+                  <p>{testResult.message}</p>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Form */}
@@ -152,7 +231,7 @@ export const FirebaseConfigModal: React.FC<FirebaseConfigModalProps> = ({
                 <span className="text-[10px] text-[#786C65]">firebase-config.js</span>
               </label>
               <textarea
-                rows={6}
+                rows={5}
                 value={jsonInput}
                 onChange={(e) => setJsonInput(e.target.value)}
                 placeholder='{\n  "apiKey": "AIzaSy...",\n  "projectId": "katalog-olumajang",\n  "storageBucket": "katalog-olumajang.appspot.com"\n}'
@@ -188,7 +267,7 @@ export const FirebaseConfigModal: React.FC<FirebaseConfigModalProps> = ({
           <div className="p-3.5 bg-white rounded-2xl border border-[#E8DFD8] text-xs space-y-2">
             <div className="flex items-center justify-between">
               <h5 className="font-extrabold text-[#1F1612] uppercase tracking-wider text-[11px]">
-                🚀 Untuk GitHub Pages (Multi-HP Otomatis):
+                🚀 PENTING AGAR HP LAIN (HP B) DAPAT MELIHAT DATA:
               </h5>
               {isConfigured && (
                 <button
@@ -202,7 +281,9 @@ export const FirebaseConfigModal: React.FC<FirebaseConfigModalProps> = ({
               )}
             </div>
             <p className="text-xs text-[#786C65] leading-relaxed">
-              Agar HP B dan seluruh pengunjung langsung terhubung otomatis ke Cloud Firestore tanpa perlu login admin, salin nilai di atas ke file <code>firebase-config.js</code> di repository GitHub Anda, lalu jalankan workflow GitHub Actions.
+              Jika Anda menyimpan konfigurasi melalui form di atas, konfigurasi hanya tersimpan di browser HP ini.
+              <strong> Agar HP B dan semua pengunjung dapat otomatis membaca data warung dari Firestore</strong>,
+              salin kode di atas ke file <code>firebase-config.js</code> di repository GitHub Anda, lalu jalankan workflow deploy GitHub Pages.
             </p>
           </div>
         </div>
