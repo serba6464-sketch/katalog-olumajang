@@ -10,12 +10,12 @@
  */
 
 export const firebaseConfig = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
-  projectId: "YOUR_PROJECT_ID",
-  storageBucket: "YOUR_PROJECT_ID.appspot.com",
-  messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
-  appId: "YOUR_APP_ID"
+  apiKey: "AIzaSyBt5HYUb4jzAKG65rFmtVoBz-SCI1mw7YY",
+  authDomain: "katalog-olumajang.firebaseapp.com",
+  projectId: "katalog-olumajang",
+  storageBucket: "katalog-olumajang.firebasestorage.app",
+  messagingSenderId: "595859230541",
+  appId: "1:595859230541:web:d715ad23c63d83e2f0f104",
 };
 
 export default firebaseConfig;
